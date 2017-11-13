@@ -392,11 +392,14 @@ class MessagePack:
     def __repr__(self):
         s = ""
         for (i, m) in enumerate(self.messages):
+            comment = "\n".join(["#%s" % l for l in str(m).split("\n")])
+            comment += "\n#" + ("-"*39)
             s += ("@{0:0>3}-{1:0>3}\n" +
                   ("="*40 + "\n") +
+                  "{3}\n" +
                   "{2}\n" +
                   ("="*40 + "\n") +
-                  "\n").format(self.index, i, m)
+                  "\n").format(self.index, i, m, comment)
         return s.strip()
 
     @property
@@ -738,12 +741,16 @@ if __name__ == "__main__":
 
     for l in LISTS:
         print "LIST", l
-        export_list(l)
-        import_list(l)
+        if "export" in argv:
+            export_list(l)
+        if "import" in argv:
+            import_list(l)
         print
 
     for s in SCRIPTS:
         print "SCRIPT", s
-        export_script_file(s)
-        import_script_file(s)
+        if "export" in argv:
+            export_script_file(s)
+        if "import" in argv:
+            import_script_file(s)
         print
