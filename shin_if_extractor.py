@@ -163,7 +163,7 @@ def decompress_from_file(filename, pointer=0):
             f.seek(pointer + 8)
             data = f.read(uncompressed_length)
 
-        elif compression_type == 0x201:
+        elif compression_type & 0xffff == 0x201:
             f.seek(pointer + 4)
             compressed_length = read_multi(f, length=4)
             f.seek(pointer + 8)
@@ -183,7 +183,10 @@ def decompress_from_file(filename, pointer=0):
                     break
 
                 length = ord(f.read(1))
-                assert length & 0x80
+                #assert length & 0x80
+                if not length & 0x80:
+                    first_compressed_byte = length
+                    continue
                 length = (length & 0x7F) + 3
 
                 lookback = ord(f.read(1))
