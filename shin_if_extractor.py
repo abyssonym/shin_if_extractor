@@ -1,5 +1,6 @@
 from sys import argv
-from os import path, stat
+from os import path, stat, makedirs
+from shutil import copyfile
 from subprocess import call
 from randomtools.psx_file_extractor import FileManager
 from randomtools.utils import read_multi, write_multi
@@ -240,7 +241,7 @@ class ShinIfFileManager(FileManager):
         return sector_index
 
     def import_file(self, name, filepath=None, new_target_sector=None):
-        if name.startswith("D/F"):
+        if name.startswith(path.join("D", "F")):
             if filepath is None:
                 filepath = path.join(self.dirname, name)
             filesize = stat(filepath).st_size
@@ -516,7 +517,8 @@ class EventMessagePack:
 
 def double_expand_f16():
     pointers = fm.get_message_pointers()
-    f16 = fm.export_file("D/F0016.BIN;1", "f16.tmp")
+    f16_export_path = path.join("D", "F0016.BIN;1")
+    f16 = fm.export_file(f16_export_path, "f16.tmp")
     f16_size = stat(f16).st_size
     f16 = open(f16, "r+b")
 
@@ -543,8 +545,8 @@ def double_expand_f16():
     assert len(new_pointers) == len(set(new_pointers))
     assert new_pointers == sorted(new_pointers)
     fm.set_message_pointers(new_pointers)
-    fm.import_file("D/F0016.BIN;1", new_f16_path)
-    fm.export_file("D/F0016.BIN;1")
+    fm.import_file(f16_export_path, new_f16_path)
+    fm.export_file(f16_export_path)
 
 
 def join_datas(datas, compressed=False):
@@ -572,7 +574,7 @@ def export_script_file(script_index=16, no_event=False):
         pointer_table_address = POINTER_TABLE_ADDRESSES[script_index]
         pointers = fm.get_message_pointers(pointer_table_address)
 
-    filename = "D/F{0:0>4}.BIN;1".format(script_index)
+    filename = path.join("D", "F{0:0>4}.BIN;1".format(script_index))
     script_filename = "script{0:0>4}.txt".format(script_index)
     script_file = open(script_filename, "w+")
     temp_fname_old = "_temp_old.tmp"
@@ -598,7 +600,7 @@ def import_script_file(script_index=16, script_filename=None, no_event=False):
     else:
         pointer_table_address = POINTER_TABLE_ADDRESSES[script_index]
         pointers = fm.get_message_pointers(pointer_table_address)
-    filename = "D/F{0:0>4}.BIN;1".format(script_index)
+    filename = path.join("D", "F{0:0>4}.BIN;1".format(script_index))
 
     if script_filename is None:
         script_filename = "script{0:0>4}.txt".format(script_index)
@@ -719,9 +721,11 @@ if __name__ == "__main__":
     minute, second, sector = 0, 2, 22
     dirname, _ = filename.rsplit('.', 1)
     dirname = "%s.root" % dirname
+    if not path.exists(dirname):
+        makedirs(dirname)
 
     outfile = "modified.%s" % filename
-    call(["cp", "-f", filename, outfile])
+    copyfile(filename, outfile)
     filename = None
 
     fm = ShinIfFileManager(outfile, dirname)
