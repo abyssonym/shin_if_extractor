@@ -12,9 +12,10 @@ POINTER_TABLE_ADDRESSES = {
     77: 0xeeb10,
     }
 
-#SCRIPTS = [16, 18, 21, 22, 23, 77] + range(25, 38+1)
-SCRIPTS = [18, 21, 22, 23, 77, 16] + range(25, 38+1)
+#SCRIPTS = [18, 21, 22, 23, 77, 16] + range(25, 38+1)
 LISTS = [17, 40, 43, 75, 81, 82, 84]
+SCRIPTS = [21, 22, 23, 77, 16] + range(25, 38+1)
+# TODO: Figure out what's wrong with script 18.
 
 table = {}
 f = open("table.txt")
@@ -607,6 +608,9 @@ def import_script_file(script_index=16, script_filename=None, no_event=False):
 
     if script_filename is None:
         script_filename = "script{0:0>4}.txt".format(script_index)
+    if not path.isfile(script_filename):
+        print "File not found: %s" % script_filename
+        return
     script_file = open(script_filename, "r")
     messdict = {}
 
