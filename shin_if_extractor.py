@@ -119,12 +119,80 @@ def wrap_uncompressed(data, message_index=0):
     return "".join(map(chr, data))
 
 
-def compress(data):
-    raise NotImplementedError
+def compress(data, optimized=False):
+    compressed_data = [None]
+    window = ""
 
+    while data:
+        for chunk_length in xrange(0xFF, 2, -1):
+            if len(data) <= 3:
+                continue
+            three = data[:chunk_length]
+            if len(three) != chunk_length:
+                continue
 
-def fake_compress(data):
-    compression_type = 0x201
+            if three not in window:
+                if not optimized:
+                    continue
+
+                for i in xrange(len(three), 0, -1):
+                    subthree = three[:i]
+                    if not window.endswith(subthree):
+                        continue
+                    multiple = len(three) / len(subthree)
+                    if len(three) % (len(subthree) * multiple):
+                        multiple += 1
+                    if three == (subthree * multiple)[:len(three)]:
+                        lookback = len(window) - window.rindex(subthree)
+                        break
+                else:
+                    continue
+            else:
+                lookback = len(window) - window.rindex(three)
+            lookback -= 1
+
+            index = compressed_data.index(None)
+            prev_next_compressed = len(compressed_data)-(index+2)
+            if prev_next_compressed < 0:
+                assert prev_next_compressed == -1
+                assert compressed_data[-1] == None
+                compressed_data = compressed_data[:-1]
+            else:
+                assert 0 <= prev_next_compressed <= 0xff
+                compressed_data[index] = chr(prev_next_compressed)
+            assert 0 <= lookback <= 0xff
+            length = len(three)
+            assert length >= 3
+            compressed_data.append(chr(0x80 + length - 3))
+            compressed_data.append(chr(lookback))
+            compressed_data.append(None)
+            window += three
+            data = data[chunk_length:]
+            break
+        else:
+            one = data[0]
+            compressed_data.append(one)
+            window += one
+            data = data[1:]
+        while len(window) >= 0x101:
+            window = window[1:]
+
+    index = compressed_data.index(None)
+    prev_next_compressed = -1
+    counter = 0
+    while prev_next_compressed < 0:
+        prev_next_compressed = len(compressed_data)-(index+2)
+        if prev_next_compressed >= 0:
+            break
+        compressed_data += '\0'
+        counter += 1
+    compressed_data[index] = chr(prev_next_compressed)
+    assert None not in compressed_data
+
+    while len(compressed_data) % 4:
+        compressed_data.append('\0')
+
+    return ''.join(compressed_data)
 
 
 class DecompressionError(Exception): pass
@@ -164,7 +232,6 @@ def decompress_from_file(filename, pointer=0):
         compression_type = read_multi(f, length=2)
         unknown_index = read_multi(f, length=2)
         indexes.append(unknown_index)
-        print hex(compression_type), hex(unknown_index)
         if compression_type == 0:
             break
 
@@ -402,7 +469,7 @@ class MessagePack:
         while len(backup) % 4:
             backup += "\x00"
         try:
-            assert self.data == backup
+            assert self.uncompressed_data == backup
         except:
             import pdb; pdb.set_trace()
 
@@ -423,8 +490,7 @@ class MessagePack:
     def index(self):
         return self.parent.index
 
-    @property
-    def data(self):
+    def get_pm_str(self):
         num_messages = len(self.messages)
         base_ptr = num_messages * 4
         pstr = ""
@@ -436,13 +502,38 @@ class MessagePack:
             mstr += m.data
             #assert mstr.endswith("\xff\xff")
             assert len(mstr) % 2 == 0
-        s = pstr + mstr
+        return pstr + mstr
+
+    @property
+    def data(self):
+        if self.message_index != 0:
+            return self.compressed_data
+        return self.uncompressed_data
+
+    @property
+    def uncompressed_data(self):
+        s = self.get_pm_str()
         header = "\x01\x00%s\x00" % chr(self.message_index)
         header = header + int2bytes(
             len(s)+8, length=4, make_string=True)
         s = header + s
         while len(s) % 4:
             s += "\x00"
+        return s
+
+    @property
+    def compressed_data(self):
+        header = "\x01\x02%s\x00" % chr(self.message_index)
+        s = self.get_pm_str()
+        print "Compressing #%s..." % self.message_index
+        compressed_s = compress(s)
+        compressed_length, uncompressed_length = len(compressed_s)+12, len(s)
+        while len(compressed_s) % 4:
+            compressed_s += '\0'
+        header += int2bytes(compressed_length, length=4, make_string=True)
+        header += int2bytes(uncompressed_length, length=4, make_string=True)
+        s = header + compressed_s
+        assert not len(s) % 4
         return s
 
 
@@ -510,9 +601,7 @@ class EventMessagePack:
             assert bytes2int(padding, length=len(padding)) == 0
 
         assert bytes2int(data[:4], length=4) == 1
-        #data = data[4:]
         size = bytes2int(data[4:8], length=4)
-        #data = data[4:]
         assert not len(data) % 4
         assert 0 <= len(data) - size <= 3
         data = data[:size]
