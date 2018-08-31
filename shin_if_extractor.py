@@ -16,6 +16,7 @@ POINTER_TABLE_ADDRESSES = {
 LISTS = [17, 40, 43, 75, 81, 82, 84]
 SCRIPTS = [21, 22, 23, 77, 16] + range(25, 38+1)
 # TODO: Figure out what's wrong with script 18.
+LISTS.append(94)
 
 table = {}
 f = open("table.txt")
@@ -104,7 +105,7 @@ def partial_str2int(s):
     return value, s
 
 
-def wrap_uncompressed(data):
+def wrap_uncompressed(data, message_index=0):
     if isinstance(data, basestring):
         data = map(ord, data)
     if data:
@@ -112,12 +113,18 @@ def wrap_uncompressed(data):
         assert isinstance(data[0], int)
     # TODO: does the datalength need to be mult. of 4?
     datalength = len(data) + 8
-    data = int2bytes(1, length=4) + int2bytes(datalength, length=4) + data
+    compression_type = 1 | (message_index << 16)
+    data = int2bytes(compression_type, length=4) + int2bytes(
+        datalength, length=4) + data
     return "".join(map(chr, data))
 
 
 def compress(data):
     raise NotImplementedError
+
+
+def fake_compress(data):
+    compression_type = 0x201
 
 
 class DecompressionError(Exception): pass
@@ -131,7 +138,7 @@ def get_compressed_from_file(filename, pointer=0):
     datas = []
     while True:
         f.seek(pointer)
-        compression_type = read_multi(f, length=4)
+        compression_type = read_multi(f, length=4) & 0xffff
         if compression_type == 0:
             break
 
@@ -151,9 +158,13 @@ def decompress_from_file(filename, pointer=0):
     except:
         raise DecompressionError("File not found.")
     datas = []
+    indexes = []
     while True:
         f.seek(pointer)
-        compression_type = read_multi(f, length=4)
+        compression_type = read_multi(f, length=2)
+        unknown_index = read_multi(f, length=2)
+        indexes.append(unknown_index)
+        print hex(compression_type), hex(unknown_index)
         if compression_type == 0:
             break
 
@@ -164,7 +175,7 @@ def decompress_from_file(filename, pointer=0):
             f.seek(pointer + 8)
             data = f.read(uncompressed_length)
 
-        elif compression_type & 0xffff == 0x201:
+        elif compression_type == 0x201:
             f.seek(pointer + 4)
             compressed_length = read_multi(f, length=4)
             f.seek(pointer + 8)
@@ -216,7 +227,7 @@ def decompress_from_file(filename, pointer=0):
         datas.append(data)
 
     f.close()
-    return datas
+    return datas, indexes
 
 
 class ShinIfFileManager(FileManager):
@@ -364,9 +375,10 @@ class Message:
 
 
 class MessagePack:
-    def __init__(self, data):
+    def __init__(self, data, message_index=0):
+        self.message_index = message_index
         backup = str(data)
-        assert bytes2int(data[:4], length=4) == 1
+        assert bytes2int(data[:4], length=4) & 0xffff == 1
         size = bytes2int(data[4:8], length=4)
         data = data[8:]
         first_pointer = bytes2int(data[:4], length=4)
@@ -425,7 +437,8 @@ class MessagePack:
             #assert mstr.endswith("\xff\xff")
             assert len(mstr) % 2 == 0
         s = pstr + mstr
-        header = "\x01\x00\x00\x00" + int2bytes(
+        header = "\x01\x00%s\x00" % chr(self.message_index)
+        header = header + int2bytes(
             len(s)+8, length=4, make_string=True)
         s = header + s
         while len(s) % 4:
@@ -434,17 +447,22 @@ class MessagePack:
 
 
 class MessagePackPack:
-    def __init__(self, index, data):
+    def __init__(self, index, data, indexes=None):
         self.index = index
         self.message_packs = []
+        self.message_indexes = indexes
         while True:
             decom = bytes2int(data[:4], length=4)
             if decom == 0:
                 break
-            assert decom == 1
+            assert decom & 0xffff == 1
             size = bytes2int(data[4:8], length=4)
             head = data[:size]
-            message_pack = MessagePack(head)
+            if self.message_indexes is not None:
+                message_pack = MessagePack(
+                    head, self.message_indexes[len(self.message_packs)])
+            else:
+                message_pack = MessagePack(head)
             self.message_packs.append(message_pack)
             message_pack.parent = self
             data = data[size:]
@@ -553,13 +571,16 @@ def double_expand_f16():
     fm.export_file(f16_export_path)
 
 
-def join_datas(datas, compressed=False):
+def join_datas(datas, compressed=False, message_indexes=None):
     s = ""
-    for d in datas:
+    for (i, d) in enumerate(datas):
         if compressed:
             s += d
         else:
-            s += wrap_uncompressed(d)
+            if message_indexes is not None:
+                s += wrap_uncompressed(d, message_indexes[i])
+            else:
+                s += wrap_uncompressed(d)
         length = len(s)
         offset = length % 4
         if offset:
@@ -585,7 +606,7 @@ def export_script_file(script_index=16, no_event=False):
     old_path = fm.export_file(filename, temp_fname_old)
 
     for i, (p, p2) in enumerate(zip(pointers, pointers[1:])):
-        datas = decompress_from_file(old_path, p)
+        datas, _ = decompress_from_file(old_path, p)
         s = join_datas(datas)
 
         if not no_event:
@@ -666,8 +687,8 @@ def import_script_file(script_index=16, script_filename=None, no_event=False):
         assert pointers == sorted(pointers)
 
     for i, (p, p2) in enumerate(zip(pointers, pointers[1:])):
-        datas = decompress_from_file(old_path, p)
-        s = join_datas(datas)
+        datas, indexes = decompress_from_file(old_path, p)
+        s = join_datas(datas, message_indexes=indexes)
 
         print i+1, "/", len(pointers)-1
         if not no_event:
@@ -680,7 +701,7 @@ def import_script_file(script_index=16, script_filename=None, no_event=False):
                 m.set_text(messdict[mp.index][j])
             data = mp.data
         else:
-            mpp = MessagePackPack(i, s)
+            mpp = MessagePackPack(i, s, indexes)
             for j, mp in enumerate(mpp.message_packs):
                 pack = (i * 1000) + j
                 for k, m in enumerate(mp.messages):
