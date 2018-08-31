@@ -691,9 +691,9 @@ def export_script_file(script_index=16, no_event=False):
     filename = path.join("D", "F{0:0>4}.BIN;1".format(script_index))
     script_filename = "script{0:0>4}.txt".format(script_index)
     if path.isfile(script_filename):
-        x = raw_input("Overwrite existing file %s? " % script_filename)
-        if not (x and x[0].lower() == 'y'):
-            return
+        print ("Cannot overwrite %s. Delete this file to export it again."
+               % script_filename)
+        return
     script_file = open(script_filename, "w+")
     temp_fname_old = "_temp_old.tmp"
     old_path = fm.export_file(filename, temp_fname_old)
